@@ -7513,3 +7513,1215 @@ do
 	TweenService:Create(root, TweenInfo.new(0.7, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {GroupTransparency = 0}):Play()
 end
 end
+
+do
+	local N = {}
+	local new, corner, stroke, tween = UI.new, UI.corner, UI.stroke, UI.tween
+	local WHITE = Color3.new(1, 1, 1)
+	local NS, KP, CS, CK = NumberSequence.new, NumberSequenceKeypoint.new, ColorSequence.new, ColorSequenceKeypoint.new
+	local function dark(c) return (c.R + c.G + c.B) < 0.05 end
+	local function hsv(off, spd) return Color3.fromHSV(((os.clock() * (spd or 0.35)) + (off or 0)) % 1, 1, 1) end
+	local function rootPart()
+		local ch = player.Character
+		return ch and ch:FindFirstChild("HumanoidRootPart")
+	end
+
+	local function H(id, fn)
+		XH[id] = function(on)
+			local ok, err = pcall(fn, on)
+			if not ok then
+				warn("[Sakura] " .. id .. ": " .. tostring(err))
+				UI.notify("⚠ " .. id .. " failed")
+			end
+		end
+	end
+
+	local function sectionGrid(tab, text)
+		local pg = UI.pages[tab]
+		if not pg then return nil end
+		for _, c in ipairs(pg:GetChildren()) do
+			if c:IsA("TextLabel") and c.Text:find(text, 1, true) then
+				for _, g in ipairs(pg:GetChildren()) do
+					if g.Name == "Grid" and g.LayoutOrder == c.LayoutOrder + 1 then return g end
+				end
+			end
+		end
+		return nil
+	end
+
+	local function addInto(tab, text, feat)
+		local d = UI.pdata[tab]
+		local g = sectionGrid(tab, text)
+		local prev = d.grid
+		if g then d.grid = g end
+		local r = UI.add(feat)
+		d.grid = prev
+		return r
+	end
+	local function Tg(tab, sec, id, name, sub, icon)
+		return addInto(tab, sec, {Tab = tab, Id = id, Name = name, Sub = sub, Icon = icon, Toggle = XT(id)})
+	end
+	local function Tn(tab, id, name, sub, icon)
+		return UI.add({Tab = tab, Id = id, Name = name, Sub = sub, Icon = icon, Toggle = XT(id)})
+	end
+
+	do
+		if UI.rows.Nameplates then
+			if nameplatesEnabled then pcall(ApplyNameplates, false) end
+			local cell = UI.pages.Player and UI.pages.Player:FindFirstChild("Nameplates", true)
+			if cell then cell:Destroy() end
+			UI.rows.Nameplates = nil
+			for i, f in ipairs(UI.feats) do
+				if f.Id == "Nameplates" then table.remove(UI.feats, i); break end
+			end
+		end
+		if UI.rows.Rain then
+			if XS.Rain and XH.Rain then pcall(XH.Rain, false) end
+			XS.Rain = nil
+			local cell = UI.pages.Visuals and UI.pages.Visuals:FindFirstChild("Rain", true)
+			if cell then cell:Destroy() end
+			UI.rows.Rain = nil
+			for i, f in ipairs(UI.feats) do
+				if f.Id == "Rain" then table.remove(UI.feats, i); break end
+			end
+		end
+	end
+
+	do
+		local EXD = {expo = 0, cloud = 60, lightR = 24, mvol = 50}
+		local sx = MISC.saved and MISC.saved.ext
+		for k, v in pairs(EXD) do
+			EXT[k] = (type(sx) == "table" and type(sx[k]) == "number") and sx[k] or v
+		end
+
+		local defs = {
+			UiBeam    = Color3.fromRGB(0, 0, 0),
+			UiPart    = Color3.fromRGB(179, 255, 98),
+			JC3       = Color3.fromRGB(255, 0, 4),
+			Shift     = Color3.fromRGB(255, 170, 220),
+			Light     = Color3.fromRGB(255, 235, 200),
+		}
+		local sc = MISC.saved and MISC.saved.colors
+		for k, c in pairs(defs) do
+			EffectColors[k] = c
+			EffectDefaults[k] = c
+			local v = sc and sc[k]
+			if type(v) == "table" then EffectColors[k] = Color3.fromRGB(v[1] or 255, v[2] or 255, v[3] or 255) end
+		end
+	end
+
+	palletEnabled = false
+	PK.on = false
+	PW.on = false
+	ApplyPallets = function() end
+	ApplyPallets2 = function() end
+	ApplyPallets3 = function() end
+
+	local PALLET_NAME = "PalletLightBrown"
+	local myActivePallet = nil
+	local savedPallets = setmetatable({}, {__mode = "k"})
+
+	local function PalletGetParts(object)
+		local parts = {}
+		if object:IsA("BasePart") then
+			table.insert(parts, object)
+		else
+			for _, obj in ipairs(object:GetDescendants()) do
+				if obj:IsA("BasePart") and obj.Name ~= "Shadoweffect" and obj.Name ~= "SakuraPalEffect" then
+					table.insert(parts, obj)
+				end
+			end
+		end
+		return parts
+	end
+
+	local function getWorldUpFace(part)
+		local faces = {
+			{face = Enum.NormalId.Top,    dir = Vector3.new(0, 1, 0),  dims = {part.Size.X, part.Size.Z}},
+			{face = Enum.NormalId.Bottom, dir = Vector3.new(0, -1, 0), dims = {part.Size.X, part.Size.Z}},
+			{face = Enum.NormalId.Front,  dir = Vector3.new(0, 0, -1), dims = {part.Size.X, part.Size.Y}},
+			{face = Enum.NormalId.Back,   dir = Vector3.new(0, 0, 1),  dims = {part.Size.X, part.Size.Y}},
+			{face = Enum.NormalId.Left,   dir = Vector3.new(-1, 0, 0), dims = {part.Size.Z, part.Size.Y}},
+			{face = Enum.NormalId.Right,  dir = Vector3.new(1, 0, 0),  dims = {part.Size.Z, part.Size.Y}},
+		}
+		local bestFace, bestScore = nil, -math.huge
+		for _, f in ipairs(faces) do
+			local worldNormal = part.CFrame:VectorToWorldSpace(f.dir)
+			if worldNormal.Y > 0.3 then
+				local area = f.dims[1] * f.dims[2]
+				local projArea = area * worldNormal.Y
+				local topY = part.Position.Y + part.Size.Y / 2
+				local score = projArea * (1 + topY / 1000)
+				if score > bestScore then
+					bestScore = score
+					bestFace = f.face
+				end
+			end
+		end
+		return bestFace
+	end
+
+	local function PalletFindTopPart(object)
+		local parts = PalletGetParts(object)
+		if #parts == 0 then return nil, nil end
+		
+		local bestPart, bestFace, bestScore = nil, nil, -math.huge
+		for _, part in ipairs(parts) do
+			local face = getWorldUpFace(part)
+			if face then
+				local size = part.Size
+				local area
+				if face == Enum.NormalId.Top or face == Enum.NormalId.Bottom then
+					area = size.X * size.Z
+				elseif face == Enum.NormalId.Front or face == Enum.NormalId.Back then
+					area = size.X * size.Y
+				else
+					area = size.Z * size.Y
+				end
+				local worldNormal = part.CFrame:VectorToWorldSpace(
+					face == Enum.NormalId.Top and Vector3.new(0,1,0) or
+					face == Enum.NormalId.Bottom and Vector3.new(0,-1,0) or
+					face == Enum.NormalId.Front and Vector3.new(0,0,-1) or
+					face == Enum.NormalId.Back and Vector3.new(0,0,1) or
+					face == Enum.NormalId.Left and Vector3.new(-1,0,0) or
+					Vector3.new(1,0,0)
+				)
+				local projArea = area * worldNormal.Y
+				local topY = part.Position.Y + size.Y / 2
+				local score = projArea * (1 + topY / 1000)
+				if score > bestScore then
+					bestScore = score
+					bestPart = part
+					bestFace = face
+				end
+			end
+		end
+		return bestPart, bestFace
+	end
+
+	local function isMyPallet(pallet)
+		if not pallet or not pallet.Parent then return false end
+		local myName = player.Name:lower()
+		local cur = pallet
+		while cur and cur ~= workspace do
+			if cur.Name:lower():find(myName, 1, true) then return true end
+			cur = cur.Parent
+		end
+		local parts = PalletGetParts(pallet)
+		for _, part in ipairs(parts) do
+			local ok, owner = pcall(function() return part:GetNetworkOwner() end)
+			if ok and owner == player then return true end
+		end
+		return false
+	end
+
+	local function applyPalletStyle(pallet, cfg)
+		if not isMyPallet(pallet) then return end
+		local data = savedPallets[pallet]
+		if not data then data = {parts = {}, textures = {}}; savedPallets[pallet] = data end
+		
+		for _, part in ipairs(PalletGetParts(pallet)) do
+			if data.parts[part] == nil then data.parts[part] = {Color = part.Color, Material = part.Material} end
+			part.Color = cfg.color
+			if cfg.material then part.Material = cfg.material end
+		end
+		for _, obj in ipairs(pallet:GetDescendants()) do
+			if (obj:IsA("Decal") or obj:IsA("Texture")) and obj.Name ~= "SakuraPalDecal" and obj.Name ~= "SakuraPalEffect" then
+				if data.textures[obj] == nil then data.textures[obj] = obj.Transparency end
+				obj.Transparency = 1
+			end
+		end
+		
+		local top, face = PalletFindTopPart(pallet)
+		if top and face then
+			local decal = Instance.new("Decal")
+			decal.Name = "SakuraPalDecal"
+			decal.Face = face
+			decal.Texture = cfg.decal
+			decal.Color3 = Color3.fromRGB(255, 255, 255)
+			pcall(function()
+				if decal.Rotation ~= 90 then decal.Rotation = 90 end
+				if cfg.tint then
+					decal.EmissiveStrength = 1
+					decal.EmissiveTint = cfg.tint
+				end
+			end)
+			decal.Parent = top
+		end
+	end
+
+	local function restorePallet(pallet)
+		local data = savedPallets[pallet]
+		if not data then return end
+		for part, info in pairs(data.parts) do
+			if part and part.Parent then part.Color = info.Color; part.Material = info.Material end
+		end
+		for obj, tr in pairs(data.textures) do
+			if obj and obj.Parent then obj.Transparency = tr end
+		end
+		for _, obj in ipairs(pallet:GetDescendants()) do
+			if obj.Name == "SakuraPalDecal" or obj.Name == "SakuraPalEffect" then obj:Destroy() end
+		end
+		savedPallets[pallet] = nil
+	end
+
+	local function togglePallet(id, name, sub, icon, color, texture, tint, material)
+		local cfg = { id = id, color = color, decal = texture, tint = tint, material = material }
+		local function toggleFn()
+			local state = not XS[id]
+			XS[id] = state
+			UpdateToggleVisual(id, state)
+			
+			if state then
+				if myActivePallet and myActivePallet.id ~= id then
+					XS[myActivePallet.id] = false
+					UpdateToggleVisual(myActivePallet.id, false)
+					for pallet in pairs(savedPallets) do restorePallet(pallet) end
+				end
+				myActivePallet = cfg
+				task.spawn(function()
+					for _, d in ipairs(workspace:GetDescendants()) do
+						if myActivePallet ~= cfg then return end
+						if d.Name == PALLET_NAME and isMyPallet(d) then applyPalletStyle(d, cfg) end
+						task.wait()
+					end
+				end)
+			else
+				if myActivePallet == cfg then
+					myActivePallet = nil
+					for pallet in pairs(savedPallets) do restorePallet(pallet) end
+				end
+			end
+			MISC.dirty()
+		end
+
+		if UI.rows[id] then
+			UI.rows[id].feat.Toggle = toggleFn
+		else
+			addInto("World", "Pallets", {Tab = "World", Id = id, Name = name, Sub = sub, Icon = icon, Toggle = toggleFn})
+		end
+	end
+
+	togglePallet("Pallets", "Anonymous pallet", "Black pallet", "📦", Color3.fromRGB(0, 0, 0), "rbxassetid://7049300738", nil, Enum.Material.Plastic)
+	togglePallet("Pallets2", "Pink pallet", "Pink + crosses", "🎀", Color3.fromRGB(255, 78, 149), "rbxassetid://304489616", nil, nil)
+	togglePallet("Pallets3", "White pallet", "White neon", "🤍", Color3.fromRGB(255, 255, 255), "rbxassetid://71490357463486", Color3.fromRGB(255, 0, 115), Enum.Material.Neon)
+	
+	local smoke = Color3.fromRGB(91, 93, 105)
+	pcall(function()
+		local bc = BrickColor.new("Smoky grey")
+		if bc.Name == "Smoky grey" then smoke = bc.Color end
+	end)
+	togglePallet("PalletBlack", "Black pallet 2", "Black + new decal", "⬛", Color3.fromRGB(0, 0, 0), "rbxassetid://120900747312435", Color3.fromRGB(255, 255, 255), nil)
+	togglePallet("PalletSmoke", "Smoke pallet", "Smoky grey + new decal", "🌫", smoke, "rbxassetid://10076753898", Color3.fromRGB(255, 0, 115), nil)
+
+	workspace.DescendantAdded:Connect(function(d)
+		if not myActivePallet then return end
+		if d.Name == PALLET_NAME then
+			task.delay(0.5, function()
+				if d.Parent and myActivePallet then applyPalletStyle(d, myActivePallet) end
+			end)
+		end
+	end)
+
+	N.uip = {}
+
+	function N.uip.torso(ch)
+		return ch and (ch:FindFirstChild("Torso") or ch:FindFirstChild("UpperTorso"))
+	end
+
+	function N.uip.destroy(ch)
+		local torso = N.uip.torso(ch)
+		if not torso then return end
+		for _, nm in ipairs({"SakuraUI_A13", "SakuraUI_A7", "SakuraUI_A8", "SakuraUIBeam"}) do
+			local o = torso:FindFirstChild(nm)
+			if o then o:Destroy() end
+		end
+	end
+
+	function N.uip.paint(beamCol, partCol)
+		local torso = N.uip.torso(player.Character)
+		if not torso then return end
+		local b = torso:FindFirstChild("SakuraUIBeam")
+		if b then b.Color = CS(beamCol) end
+		local a7 = torso:FindFirstChild("SakuraUI_A7")
+		local e = a7 and a7:FindFirstChild("SakuraUIEmitter")
+		if e then
+			e.Color = CS(partCol)
+			e.LightEmission = dark(partCol) and 0 or 1
+		end
+	end
+
+	function N.uip.build(ch)
+		local torso = N.uip.torso(ch)
+		if not torso then return end
+		N.uip.destroy(ch)
+
+		local function att(nm, pos, ori)
+			local a = Instance.new("Attachment")
+			a.Name = nm
+			a.CFrame = CFrame.new(pos) * CFrame.fromOrientation(math.rad(ori.X), math.rad(ori.Y), math.rad(ori.Z))
+			a.Parent = torso
+			return a
+		end
+		local a13 = att("SakuraUI_A13", Vector3.new(-4.85, 2.817, 5.983), Vector3.new(-5.287, 17.596, -0.002))
+		local a7  = att("SakuraUI_A7",  Vector3.new(1.033, 2.817, 4.117), Vector3.new(-84.712, -162.411, 0.009))
+		local a8  = att("SakuraUI_A8",  Vector3.new(7.154, 2.817, 2.176), Vector3.new(-5.287, 17.596, -0.002))
+
+		local beam = Instance.new("Beam")
+		beam.Name = "SakuraUIBeam"
+		beam.Attachment0 = a8
+		beam.Attachment1 = a13
+		beam.Color = CS(EffectColors.UiBeam)
+		beam.Brightness = 1
+		beam.LightEmission = 0
+		beam.LightInfluence = 0
+		beam.TextureMode = Enum.TextureMode.Stretch
+		beam.TextureLength = 1
+		beam.TextureSpeed = 1
+		beam.Transparency = NS(0)
+		beam.ZOffset = 0
+		beam.FaceCamera = false
+		beam.Segments = 10
+		beam.Width0 = 5
+		beam.Width1 = 5
+		beam.CurveSize0 = 0
+		beam.CurveSize1 = 0
+		beam.Enabled = true
+		beam.Parent = torso
+
+		local e = Instance.new("ParticleEmitter")
+		e.Name = "SakuraUIEmitter"
+		e.Texture = "rbxassetid://15780623325"
+		e.Brightness = 1
+		e.Color = CS(EffectColors.UiPart)
+		e.LightEmission = dark(EffectColors.UiPart) and 0 or 1
+		e.LightInfluence = 0
+		e.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+		e.Size = NS(5.00965)
+		e.Squash = NS(-0.6)
+		e.Transparency = NS({KP(0, 1), KP(0.2, 0.2), KP(0.8, 0.2), KP(1, 1)})
+		e.ZOffset = 0.2
+		e.EmissionDirection = Enum.NormalId.Top
+		e.Lifetime = NumberRange.new(1, 1)
+		e.Rate = 4
+		e.Rotation = NumberRange.new(0, 0)
+		e.RotSpeed = NumberRange.new(0, 0)
+		e.Speed = NumberRange.new(0.25, 0.25)
+		e.SpreadAngle = Vector2.new(0, 0)
+		e.Acceleration = Vector3.new(0, 0, 0)
+		e.Drag = 0
+		e.LockedToPart = true
+		e.TimeScale = 1
+		pcall(function()
+			e.Shape = Enum.ParticleEmitterShape.Box
+			e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+			e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+			e.FlipbookLayout = Enum.ParticleFlipbookLayout.Grid4x4
+			e.FlipbookBlendFrames = true
+			e.FlipbookMode = Enum.ParticleFlipbookMode.OneShot
+			e.FlipbookStartRandom = false
+			e.VelocityInheritance = 0
+			e.WindAffectsDrag = false
+		end)
+		e.Enabled = true
+		e.Parent = a7
+	end
+
+	H("UiPanel", function(on)
+		local ch = player.Character
+		if on then
+			if ch then N.uip.build(ch) end
+		else
+			N.uip.destroy(ch)
+		end
+	end)
+	XHK.UiPanel = function(ch) if XS.UiPanel then N.uip.build(ch) end end
+
+	H("UiPanelRainbow", function(on)
+		xLoop("uiprain", on and function() N.uip.paint(hsv(0), hsv(0.5)) end or nil)
+		if not on then N.uip.paint(EffectColors.UiBeam, EffectColors.UiPart) end
+	end)
+
+	Tg("Player", "Accessories", "UiPanel", "UI panel", "Black beam + glowing particle", "🔳")
+	Tg("Player", "Accessories", "UiPanelRainbow", "UI panel rainbow", "Colors cycle", "🌈")
+
+	N.j3 = {active = {}, last = 0}
+
+	function N.j3.paint(en, col)
+		for _, e in ipairs(en.ems) do
+			if e.Parent then e.Color = CS(col) end
+		end
+		if en.light and en.light.Parent then
+			en.light.Color = Color3.new(col.R * 0.667, col.G * 0.667, col.B * 0.667)
+		end
+	end
+
+	function N.j3.spawn(char)
+		local now = os.clock()
+		if now - N.j3.last < 0.3 then return end
+		N.j3.last = now
+
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if not root then return end
+
+		local pos = root.Position - Vector3.new(0, 3, 0)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {char}
+		local hit = workspace:Raycast(root.Position, Vector3.new(0, -12, 0), params)
+		if hit then pos = hit.Position + Vector3.new(0, 0.05, 0) end
+
+		local part = Instance.new("Part")
+		part.Name = "SakuraJC3"
+		part.Anchored = true; part.CanCollide = false; part.CanTouch = false; part.CanQuery = false
+		part.CastShadow = false; part.Transparency = 1
+		part.Size = Vector3.new(0.2, 0.2, 0.2)
+		part.CFrame = CFrame.new(pos)
+		part.Parent = workspace
+
+		local att = Instance.new("Attachment")
+		att.Name = "Floor"
+		att.Parent = part
+
+		local col = XS.JumpCircle3Rainbow and hsv(0) or EffectColors.JC3
+		local ems = {}
+
+		local function mk(c)
+			local e = Instance.new("ParticleEmitter")
+			e.Name = c.name
+			e.Texture = c.tex
+			e.Brightness = c.bright
+			e.Color = CS(col)
+			e.LightEmission = 0
+			e.LightInfluence = 0
+			e.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+			e.Size = c.size
+			e.Squash = NS(0)
+			e.Transparency = c.trans
+			e.ZOffset = c.z
+			e.EmissionDirection = Enum.NormalId.Top
+			e.Lifetime = c.life
+			e.Rate = c.rate
+			e.Rotation = c.rot
+			e.RotSpeed = c.rs
+			e.Speed = NumberRange.new(0.001, 0.001)
+			e.SpreadAngle = Vector2.new(0, 0)
+			e.Acceleration = c.acc or Vector3.new(0, 0, 0)
+			e.Drag = 0
+			e.LockedToPart = false
+			e.TimeScale = 1
+			pcall(function()
+				e.Shape = Enum.ParticleEmitterShape.Box
+				e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+				e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+				e.FlipbookLayout = Enum.ParticleFlipbookLayout.None
+				e.VelocityInheritance = 0
+				e.WindAffectsDrag = false
+			end)
+			e.Enabled = true
+			e.Parent = att
+			table.insert(ems, e)
+			return e
+		end
+
+		mk({name = "Circle16", tex = "rbxassetid://16878073342", bright = 2, z = 0.01,
+			size = NS({KP(0, 1.5), KP(0.5, 4), KP(1, 5)}), trans = NS({KP(0, 1), KP(0.15, 0.35), KP(1, 1)}),
+			life = NumberRange.new(1, 1.5), rate = 35, rot = NumberRange.new(0, 360), rs = NumberRange.new(-50, 50),
+			acc = Vector3.new(0, 2, 0)})
+		local ring = mk({name = "Circle29", tex = "rbxassetid://16878102398", bright = 5, z = 0,
+			size = NS(5), trans = NS(0), life = NumberRange.new(1.01, 1.01), rate = 2,
+			rot = NumberRange.new(0, 0), rs = NumberRange.new(-180, -180)})
+		mk({name = "Circle29", tex = "rbxassetid://16878102398", bright = 6, z = -0.01,
+			size = NS({KP(0, 2), KP(1, 6)}), trans = NS({KP(0, 0.2), KP(1, 1)}),
+			life = NumberRange.new(1.01, 1.01), rate = 20, rot = NumberRange.new(0, 0), rs = NumberRange.new(-180, -180)})
+
+		local light = Instance.new("PointLight")
+		light.Name = "PointLight"
+		light.Brightness = 4
+		light.Range = 11
+		light.Shadows = false
+		light.Enabled = true
+		light.Parent = part
+
+		local en = {part = part, ems = ems, light = light}
+		N.j3.paint(en, col)
+		table.insert(N.j3.active, en)
+		pcall(function() ring:Emit(1) end)
+
+		task.delay(0.5, function()
+			for _, e in ipairs(ems) do
+				if e.Parent then e.Enabled = false end
+			end
+			if light.Parent then
+				TweenService:Create(light, TweenInfo.new(1.2), {Brightness = 0}):Play()
+			end
+		end)
+		task.delay(3.5, function()
+			for i, a in ipairs(N.j3.active) do
+				if a == en then table.remove(N.j3.active, i); break end
+			end
+			if part then part:Destroy() end
+		end)
+	end
+
+	function N.j3.hook(char)
+		local hum = char:WaitForChild("Humanoid", 10)
+		if not hum then return end
+		hum.StateChanged:Connect(function(_, new)
+			if new == Enum.HumanoidStateType.Jumping and XS.JumpCircle3 then N.j3.spawn(char) end
+		end)
+	end
+	if player.Character then task.spawn(N.j3.hook, player.Character) end
+	player.CharacterAdded:Connect(N.j3.hook)
+
+	H("JumpCircle3", function(on) end)
+	H("JumpCircle3Rainbow", function(on)
+		xLoop("j3rain", on and function()
+			local c = hsv(0)
+			for _, en in ipairs(N.j3.active) do
+				if en.part.Parent then N.j3.paint(en, c) end
+			end
+		end or nil)
+	end)
+
+	Tg("Visuals", "Visual effects", "JumpCircle3", "Jump Circle 3", "Rings + light on jump", "⭕")
+	Tg("Visuals", "Visual effects", "JumpCircle3Rainbow", "Jump Circle 3 rainbow", "Colors cycle", "🌈")
+
+	local function follower(name, size, yOff)
+		local p = Instance.new("Part")
+		p.Name = name
+		p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
+		p.CastShadow = false; p.Transparency = 1
+		p.Size = size
+		p.Parent = workspace
+		return p
+	end
+
+	N.click = {}
+	H("ClickFx", function(on)
+		if N.click.conn then N.click.conn:Disconnect(); N.click.conn = nil end
+		if on then
+			if not N.click.gui then
+				N.click.gui = new("ScreenGui", {Name = "SakuraClicks", ResetOnSpawn = false, IgnoreGuiInset = true,
+					DisplayOrder = 10001, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, player:WaitForChild("PlayerGui"))
+			end
+			N.click.conn = UIS.InputBegan:Connect(function(io)
+				local ut = io.UserInputType
+				if ut ~= Enum.UserInputType.MouseButton1 and ut ~= Enum.UserInputType.Touch then return end
+				local pos = (ut == Enum.UserInputType.Touch) and Vector2.new(io.Position.X, io.Position.Y) or UIS:GetMouseLocation()
+				local c = new("Frame", {AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, pos.X, 0, pos.Y),
+					Size = UDim2.new(0, 8, 0, 8), BackgroundTransparency = 1, ZIndex = 900}, N.click.gui)
+				corner(c, 100)
+				local s = stroke(c, Themes[currentTheme].Accent2, 2.5, 0)
+				tween(c, 0.5, {Size = UDim2.new(0, 70, 0, 70)})
+				tween(s, 0.5, {Transparency = 1})
+				task.delay(0.55, function() c:Destroy() end)
+			end)
+		end
+	end)
+
+	do
+		local g = new("ScreenGui", {Name = "SakuraCompass", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 9986,
+			Enabled = false, ZIndexBehavior = Enum.ZIndexBehavior.Sibling}, player:WaitForChild("PlayerGui"))
+		local f = new("Frame", {AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 60), Size = UDim2.new(0, 150, 0, 30),
+			BackgroundTransparency = 0.18, BorderSizePixel = 0, ZIndex = 500}, g)
+		corner(f, 15)
+		local s = stroke(f, Themes[1].Accent, 1.5, 0.1)
+		local l = new("TextLabel", {Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamBold,
+			TextSize = 14, Text = "N 0°", ZIndex = 501}, f)
+		UI.bind(function(t) f.BackgroundColor3 = t.Panel; s.Color = t.Accent; l.TextColor3 = t.Text end)
+		N.cmp = {gui = g, label = l}
+	end
+	H("Compass", function(on)
+		N.cmp.gui.Enabled = on
+		pcall(function() RunService:UnbindFromRenderStep("SakuraCompass") end)
+		if on then
+			local acc = 0
+			local dirs = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"}
+			RunService:BindToRenderStep("SakuraCompass", Enum.RenderPriority.Camera.Value + 23, function(dt)
+				acc = acc + dt
+				if acc < 0.06 then return end
+				acc = 0
+				local cam = workspace.CurrentCamera
+				if not cam then return end
+				local look = cam.CFrame.LookVector
+				local h = math.deg(math.atan2(look.X, -look.Z)) % 360
+				N.cmp.label.Text = dirs[math.floor((h + 22.5) / 45) % 8 + 1] .. "  " .. math.floor(h + 0.5) .. "°"
+			end)
+		end
+	end)
+
+	H("Sepia", function(on)
+		xFx("sepia", "ColorCorrectionEffect", "SakuraSepia", {TintColor = Color3.fromRGB(255, 225, 180), Saturation = -0.35, Contrast = 0.08}, on)
+	end)
+
+	N.light = {}
+	H("Exposure", function(on)
+		xLoop("expo", nil)
+		if on then
+			if N.light.expo == nil then N.light.expo = Lighting.ExposureCompensation end
+			xLoop("expo", function()
+				local v = EXT.expo / 10
+				if Lighting.ExposureCompensation ~= v then Lighting.ExposureCompensation = v end
+			end)
+		elseif N.light.expo ~= nil then
+			Lighting.ExposureCompensation = N.light.expo
+			N.light.expo = nil
+		end
+	end)
+	H("ColorShift", function(on)
+		xLoop("shift", nil)
+		if on then
+			if not N.light.shift then N.light.shift = {Lighting.ColorShift_Top, Lighting.ColorShift_Bottom} end
+			xLoop("shift", function()
+				local c = EffectColors.Shift
+				Lighting.ColorShift_Top = c
+				Lighting.ColorShift_Bottom = c
+			end)
+		elseif N.light.shift then
+			Lighting.ColorShift_Top = N.light.shift[1]
+			Lighting.ColorShift_Bottom = N.light.shift[2]
+			N.light.shift = nil
+		end
+	end)
+	H("PlayerLight", function(on)
+		xLoop("plight", nil)
+		if not on then
+			local r = rootPart()
+			local l = r and r:FindFirstChild("SakuraPlayerLight")
+			if l then l:Destroy() end
+			return
+		end
+		xLoop("plight", function()
+			local r = rootPart()
+			if not r then return end
+			local l = r:FindFirstChild("SakuraPlayerLight")
+			if not l then
+				l = Instance.new("PointLight")
+				l.Name = "SakuraPlayerLight"; l.Shadows = false; l.Parent = r
+			end
+			l.Range = EXT.lightR; l.Brightness = 2; l.Color = EffectColors.Light
+		end)
+	end)
+	H("Flashlight", function(on)
+		pcall(function() RunService:UnbindFromRenderStep("SakuraFlashlight") end)
+		if N.fl then N.fl:Destroy(); N.fl = nil end
+		if not on then return end
+		local p = follower("SakuraFlashPart", Vector3.new(0.2, 0.2, 0.2))
+		local s = Instance.new("SpotLight")
+		s.Brightness = 3; s.Range = 80; s.Angle = 55; s.Face = Enum.NormalId.Front; s.Shadows = false
+		s.Parent = p
+		N.fl = p
+		RunService:BindToRenderStep("SakuraFlashlight", Enum.RenderPriority.Camera.Value + 22, function()
+			local cam = workspace.CurrentCamera
+			if cam then p.CFrame = cam.CFrame end
+		end)
+	end)
+
+	H("Clouds", function(on)
+		local t = workspace:FindFirstChildOfClass("Terrain")
+		if not t then return end
+		xLoop("clouds", nil)
+		if on then
+			local c = t:FindFirstChildOfClass("Clouds")
+			if not N.cloudSaved then
+				N.cloudSaved = c and {existed = true, Cover = c.Cover, Density = c.Density, Enabled = c.Enabled} or {existed = false}
+			end
+			if not c then
+				c = Instance.new("Clouds")
+				c.Name = "SakuraClouds"
+				c.Parent = t
+			end
+			xLoop("clouds", function()
+				local cl = t:FindFirstChildOfClass("Clouds")
+				if not cl then return end
+				cl.Enabled = true
+				cl.Cover = EXT.cloud / 100
+				cl.Density = 0.7
+			end)
+		elseif N.cloudSaved then
+			local c = t:FindFirstChildOfClass("Clouds")
+			if c then
+				if N.cloudSaved.existed then
+					c.Cover = N.cloudSaved.Cover; c.Density = N.cloudSaved.Density; c.Enabled = N.cloudSaved.Enabled
+				else
+					c:Destroy()
+				end
+			end
+			N.cloudSaved = nil
+		end
+	end)
+
+	H("AirWalk", function(on)
+		xLoop("airwalk", nil)
+		if N.air then N.air:Destroy(); N.air = nil end
+		if not on then return end
+		local r = rootPart()
+		if not r then return end
+		local hum = MV.hum()
+		local p = follower("SakuraAirWalk", Vector3.new(8, 1, 8))
+		p.CanCollide = true
+		N.air = p
+		local y = r.Position.Y - (r.Size.Y / 2 + (hum and hum.HipHeight or 2)) - 0.5
+		xLoop("airwalk", function(dt)
+			local rr = rootPart()
+			if not rr then return end
+			if not UIS:GetFocusedTextBox() then
+				if UIS:IsKeyDown(Enum.KeyCode.Space) then y = y + 14 * dt end
+				if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then y = y - 14 * dt end
+			end
+			p.CFrame = CFrame.new(rr.Position.X, y, rr.Position.Z)
+		end)
+	end)
+
+	H("FreeCursor", function(on)
+		xLoop("freecursor", on and function()
+			if UIS.MouseBehavior ~= Enum.MouseBehavior.Default then UIS.MouseBehavior = Enum.MouseBehavior.Default end
+			if not UIS.MouseIconEnabled then UIS.MouseIconEnabled = true end
+		end or nil)
+	end)
+
+	Tg("Visuals", "More effects", "Sepia", "Sepia", "Warm old-photo filter", "🟤")
+	Tg("Visuals", "More effects", "ClickFx", "Click ripple", "Ring where you click", "🔘")
+	Tg("Visuals", "More effects", "Compass", "Compass", "Heading on screen", "🧭")
+	Tg("Visuals", "More effects", "Flashlight", "Flashlight", "Light from your camera", "🔦")
+
+	UI.section("Visuals", "💡  Light & glow")
+	Tn("Visuals", "Exposure", "Exposure", "Brighter / darker world", "🔅")
+	Tn("Visuals", "PlayerLight", "Player light", "Lamp around you", "💡")
+	Tn("Visuals", "ColorShift", "Color shift", "Tint the world light", "🎨")
+	UI.sliderRow("Visuals", "🔅  Exposure: ", -30, 30, EXT.expo, function(v) EXT.expo = v end)
+	UI.sliderRow("Visuals", "💡  Light range: ", 8, 60, EXT.lightR, function(v) EXT.lightR = v end)
+
+	UI.section("Movement", "🛸  Extra movement")
+	Tn("Movement", "AirWalk", "Air walk", "Walk on air (Space / Ctrl)", "☁")
+
+	UI.section("World", "🌤  Sky & weather")
+	Tn("World", "Clouds", "Clouds", "Custom cloud cover", "☁")
+	UI.sliderRow("World", "☁  Cloud cover %: ", 0, 100, EXT.cloud, function(v) EXT.cloud = v end)
+	UI.idRow("World", "🌌  Custom sky: paste an image ID (all 6 sides)", "rbxassetid://... or just the number",
+		function(id)
+			local s = Lighting:FindFirstChild("SakuraCustomSky")
+			if not s then s = Instance.new("Sky"); s.Name = "SakuraCustomSky"; s.Parent = Lighting end
+			local u = "rbxassetid://" .. id
+			s.SkyboxBk = u; s.SkyboxDn = u; s.SkyboxFt = u; s.SkyboxLf = u; s.SkyboxRt = u; s.SkyboxUp = u
+			return "✓ Custom sky applied"
+		end,
+		function()
+			local s = Lighting:FindFirstChild("SakuraCustomSky")
+			if s then s:Destroy() end
+			return "↺ Custom sky removed"
+		end)
+
+	UI.section("Misc", "🧰  Server tools")
+	Tn("Misc", "FreeCursor", "Free cursor", "Mouse always unlocked", "🖱")
+
+	UI.section("Misc", "🎵  Music player")
+	N.mus = {}
+	UI.idRow("Misc", "🎵  Audio ID — Apply plays, Reset stops", "rbxassetid://... or just the number",
+		function(id)
+			if N.mus.sound then N.mus.sound:Destroy() end
+			local s = Instance.new("Sound")
+			s.Name = "SakuraMusic"
+			s.SoundId = "rbxassetid://" .. id
+			s.Looped = true
+			s.Volume = EXT.mvol / 50
+			s.Parent = game:GetService("SoundService")
+			s:Play()
+			N.mus.sound = s
+			task.delay(3, function()
+				if N.mus.sound == s and not s.IsLoaded then UI.notify("⚠ Audio did not load (private or wrong ID?)") end
+			end)
+			return "▶ Playing"
+		end,
+		function()
+			if N.mus.sound then N.mus.sound:Destroy(); N.mus.sound = nil end
+			return "⏹ Stopped"
+		end)
+	UI.sliderRow("Misc", "🎵  Music volume: ", 0, 100, EXT.mvol, function(v)
+		EXT.mvol = v
+		if N.mus.sound then N.mus.sound.Volume = v / 50 end
+	end)
+
+	do
+		N.live = {
+			UiBeam = function() if not XS.UiPanelRainbow then N.uip.paint(EffectColors.UiBeam, EffectColors.UiPart) end end,
+			UiPart = function() if not XS.UiPanelRainbow then N.uip.paint(EffectColors.UiBeam, EffectColors.UiPart) end end,
+		}
+		local oldXC = XColorUpdate
+		function XColorUpdate(key, col)
+			if oldXC then oldXC(key, col) end
+			local f = N.live[key]
+			if f then f(col) end
+		end
+
+		local function colorRow(key, label)
+			local row = UI.fullRow("Settings", 72)
+			local preview = new("Frame", {Size = UDim2.new(0, 22, 0, 22), Position = UDim2.new(0, 10, 0, 8),
+				BackgroundColor3 = EffectColors[key], BorderSizePixel = 0, ZIndex = 14}, row)
+			corner(preview, 11); stroke(preview, WHITE, 1, 0.5)
+			local lbl = new("TextLabel", {BackgroundTransparency = 1, Size = UDim2.new(0, 260, 0, 22), Position = UDim2.new(0, 40, 0, 8),
+				Text = label, Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 14}, row)
+			UI.bind(function(t) lbl.TextColor3 = t.Text end)
+			local setHue = UI.hueSlider(row, 40, EffectColors[key], function(col)
+				EffectColors[key] = col
+				MISC.dirty()
+				preview.BackgroundColor3 = col
+				XColorUpdate(key, col)
+			end, false, true)
+			if UI.colorSetters then
+				UI.colorSetters[key] = function(col) preview.BackgroundColor3 = col; setHue(col) end
+			end
+			return row
+		end
+
+		local list = {
+			{"UiBeam", "UI panel: beam"}, {"UiPart", "UI panel: particle"}, {"JC3", "Jump Circle 3 (rings + light)"},
+			{"Shift", "Color shift"}, {"Light", "Player light"},
+		}
+
+		local pg = UI.pages.Settings
+		local lab
+		for _, c in ipairs(pg:GetChildren()) do
+			if c:IsA("TextLabel") and c.Text:find("Effect colors", 1, true) then lab = c; break end
+		end
+		local base = lab and lab.LayoutOrder
+		if base then
+			for _, c in ipairs(pg:GetChildren()) do
+				if c:IsA("GuiObject") and c ~= lab and c.LayoutOrder > base then c.LayoutOrder = c.LayoutOrder + #list end
+			end
+			UI.pdata.Settings.order = UI.pdata.Settings.order + #list
+		end
+		for i, it in ipairs(list) do
+			local row = colorRow(it[1], it[2])
+			if base then row.LayoutOrder = base + i end
+		end
+	end
+end
+
+do
+	local new, corner, stroke = UI.new, UI.corner, UI.stroke
+	local WHITE = Color3.new(1, 1, 1)
+	local NS, KP, CS = NumberSequence.new, NumberSequenceKeypoint.new, ColorSequence.new
+
+	local DEF = {airGlow = 25, airStar = 20, airArea = 14, airSize = 8, airLife = 12}
+	local sx = MISC.saved and MISC.saved.ext
+	for k, v in pairs(DEF) do
+		EXT[k] = (type(sx) == "table" and type(sx[k]) == "number") and sx[k] or v
+	end
+	local CDEF = {AirGlow = Color3.fromRGB(255, 255, 255), AirStar = Color3.fromRGB(70, 95, 255)}
+	local sc = MISC.saved and MISC.saved.colors
+	for k, c in pairs(CDEF) do
+		EffectColors[k] = c
+		EffectDefaults[k] = c
+		local v = sc and sc[k]
+		if type(v) == "table" then EffectColors[k] = Color3.fromRGB(v[1] or 255, v[2] or 255, v[3] or 255) end
+	end
+
+	local function dark(c) return (c.R + c.G + c.B) < 0.05 end
+	local function rootPart()
+		local ch = player.Character
+		return ch and ch:FindFirstChild("HumanoidRootPart")
+	end
+	local function H(id, fn)
+		XH[id] = function(on)
+			local ok, err = pcall(fn, on)
+			if not ok then
+				warn("[Sakura] " .. id .. ": " .. tostring(err))
+				UI.notify("⚠ " .. id .. " failed")
+			end
+		end
+	end
+
+	local function glowLook(e)
+		local s, life = EXT.airSize / 10, EXT.airLife / 10
+		e.Size = NS({KP(0, s * 0.3), KP(0.4, s * 1.6), KP(1, s * 0.3)})
+		e.Transparency = NS({KP(0, 1), KP(0.25, 0.1), KP(0.75, 0.1), KP(1, 1)})
+		e.Lifetime = NumberRange.new(life * 0.8, life * 1.2)
+	end
+	local function starLook(e)
+		local s, life = EXT.airSize / 10, EXT.airLife / 10
+		e.Size = NS({KP(0, s * 0.2), KP(0.5, s), KP(1, s * 0.2)})
+		e.Transparency = NS({KP(0, 1), KP(0.3, 0.1), KP(0.7, 0.1), KP(1, 1)})
+		e.Lifetime = NumberRange.new(life * 0.8, life * 1.2)
+	end
+	local function boxShape(e)
+		pcall(function()
+			e.Shape = Enum.ParticleEmitterShape.Box
+			e.ShapeInOut = Enum.ParticleEmitterShapeInOut.Outward
+			e.ShapeStyle = Enum.ParticleEmitterShapeStyle.Volume
+			e.FlipbookLayout = Enum.ParticleFlipbookLayout.None
+		end)
+	end
+
+	local function buildGlow(att)
+		local e = Instance.new("ParticleEmitter")
+		e.Name = "Glowing Core"
+		e.Texture = "rbxassetid://1084970835"
+		e.Brightness = 1
+		e.Color = CS(EffectColors.AirGlow)
+		e.LightEmission = 1
+		e.LightInfluence = 0
+		e.Orientation = Enum.ParticleOrientation.FacingCamera
+		e.Squash = NS(0)
+		e.ZOffset = 0
+		e.EmissionDirection = Enum.NormalId.Top
+		e.Rate = 0
+		e.Rotation = NumberRange.new(0, 0)
+		e.RotSpeed = NumberRange.new(0, 0)
+		e.Speed = NumberRange.new(0, 0)
+		e.SpreadAngle = Vector2.new(0, 0)
+		e.Acceleration = Vector3.new(0, 0, 0)
+		e.Drag = 0
+		e.LockedToPart = false
+		boxShape(e)
+		glowLook(e)
+		e.Enabled = true
+		e.Parent = att
+		return e
+	end
+
+	local function buildStar(att)
+		local c = EffectColors.AirStar
+		local e = Instance.new("ParticleEmitter")
+		e.Name = "CenterStar (30)"
+		e.Texture = "rbxassetid://8611887703"
+		e.Brightness = 6.46
+		e.Color = CS(c)
+		e.LightEmission = dark(c) and 0 or 0.45
+		e.LightInfluence = 0
+		e.Orientation = Enum.ParticleOrientation.VelocityPerpendicular
+		e.Squash = NS(0)
+		e.ZOffset = 0
+		e.EmissionDirection = Enum.NormalId.Front
+		e.Rate = 0
+		e.Rotation = NumberRange.new(0, 0)
+		e.RotSpeed = NumberRange.new(0, 0)
+		e.Speed = NumberRange.new(0.001, 0.001)
+		e.SpreadAngle = Vector2.new(0, 0)
+		e.Acceleration = Vector3.new(0, 0, 0)
+		e.Drag = 0
+		e.LockedToPart = false
+		boxShape(e)
+		starLook(e)
+		e.Enabled = true
+		e.Parent = att
+		return e
+	end
+
+	local POOL = 16
+	local function newSpawner(name, build, faceCam, rateKey)
+		return {name = name, build = build, faceCam = faceCam, rateKey = rateKey, pool = {}, idx = 0, acc = 0}
+	end
+	local SP = {
+		glow = newSpawner("SakuraAirGlow",  buildGlow, false, "airGlow"),
+		star = newSpawner("SakuraAirStars", buildStar, true,  "airStar"),
+	}
+
+	local function spInit(sp)
+		for i = 1, POOL do
+			local p = Instance.new("Part")
+			p.Name = sp.name
+			p.Anchored = true; p.CanCollide = false; p.CanTouch = false; p.CanQuery = false
+			p.CastShadow = false; p.Transparency = 1
+			p.Size = Vector3.new(0.2, 0.2, 0.2)
+			p.Parent = workspace
+			local att = Instance.new("Attachment")
+			att.Name = "Middle"
+			att.Parent = p
+			sp.pool[i] = {part = p, e = sp.build(att)}
+		end
+	end
+	local function spDestroy(sp)
+		for _, it in ipairs(sp.pool) do
+			if it.part then it.part:Destroy() end
+		end
+		sp.pool = {}
+	end
+
+	local function spawnOne(sp)
+		local r = rootPart()
+		if not r or #sp.pool == 0 then return end
+		local R = EXT.airArea
+		local ang = math.random() * math.pi * 2
+		local dist = 3 + math.random() * math.max(1, R - 3)
+		local h = -1.5 + math.random() * 9.5
+		local pos = r.Position + Vector3.new(math.cos(ang) * dist, h, math.sin(ang) * dist)
+
+		sp.idx = sp.idx % #sp.pool + 1
+		local it = sp.pool[sp.idx]
+		local cam = workspace.CurrentCamera
+		if sp.faceCam and cam and (cam.CFrame.Position - pos).Magnitude > 0.5 then
+			it.part.CFrame = CFrame.new(pos, cam.CFrame.Position)
+		else
+			it.part.CFrame = CFrame.new(pos)
+		end
+		it.e:Emit(1)
+	end
+
+	local function runSpawner(key, sp)
+		sp.acc = 0
+		xLoop(key, function(dt)
+			sp.acc = sp.acc + dt * EXT[sp.rateKey]
+			local n = 0
+			while sp.acc >= 1 and n < 6 do
+				sp.acc = sp.acc - 1
+				n = n + 1
+				spawnOne(sp)
+			end
+			if sp.acc > 6 then sp.acc = 0 end
+		end)
+	end
+
+	H("AirGlow", function(on)
+		xLoop("airglow", nil)
+		spDestroy(SP.glow)
+		if not on then return end
+		spInit(SP.glow)
+		runSpawner("airglow", SP.glow)
+	end)
+	H("AirStars", function(on)
+		xLoop("airstars", nil)
+		spDestroy(SP.star)
+		if not on then return end
+		spInit(SP.star)
+		runSpawner("airstars", SP.star)
+	end)
+
+	local function relook()
+		for _, it in ipairs(SP.glow.pool) do glowLook(it.e) end
+		for _, it in ipairs(SP.star.pool) do starLook(it.e) end
+	end
+
+	local sliders = {}
+	local function S(tab, prefix, min, max, key, onChange)
+		local obj = UI.sliderRow(tab, prefix, min, max, EXT[key], function(v)
+			EXT[key] = v
+			if onChange then onChange(v) end
+		end)
+		table.insert(sliders, {obj, key})
+	end
+	UI.section("Visuals", "💫  Air particles")
+	UI.add({Tab = "Visuals", Id = "AirGlow", Name = "Air glow", Sub = "Glowing orbs pop in the air", Icon = "✨", Toggle = XT("AirGlow")})
+	S("Visuals", "✨  Air glow amount: ", 1, 60, "airGlow")
+	UI.add({Tab = "Visuals", Id = "AirStars", Name = "Air stars", Sub = "Stars flash in the air around you", Icon = "🌟", Toggle = XT("AirStars")})
+	S("Visuals", "🌟  Air stars amount: ", 1, 60, "airStar")
+	S("Visuals", "💫  Air radius: ", 6, 40, "airArea")
+	S("Visuals", "📏  Air particle size: ", 2, 30, "airSize", relook)
+	S("Visuals", "⏳  Air particle lifetime: ", 3, 40, "airLife", relook)
+
+	do
+		local oldReset = MISC.resetAll
+		if oldReset then
+			MISC.resetAll = function(silent)
+				oldReset(silent)
+				for _, it in ipairs(sliders) do pcall(it[1].set, DEF[it[2]]) end
+			end
+		end
+	end
+
+	do
+		local prevXC = XColorUpdate
+		function XColorUpdate(key, col)
+			if prevXC then prevXC(key, col) end
+			if key == "AirGlow" then
+				for _, it in ipairs(SP.glow.pool) do it.e.Color = CS(col) end
+			elseif key == "AirStar" then
+				for _, it in ipairs(SP.star.pool) do
+					it.e.Color = CS(col)
+					it.e.LightEmission = dark(col) and 0 or 0.45
+				end
+			end
+		end
+	end
+
+	do
+		local function colorRow(key, label, noBlack)
+			local row = UI.fullRow("Settings", 72)
+			local preview = new("Frame", {Size = UDim2.new(0, 22, 0, 22), Position = UDim2.new(0, 10, 0, 8),
+				BackgroundColor3 = EffectColors[key], BorderSizePixel = 0, ZIndex = 14}, row)
+			corner(preview, 11); stroke(preview, WHITE, 1, 0.5)
+			local lbl = new("TextLabel", {BackgroundTransparency = 1, Size = UDim2.new(0, 280, 0, 22), Position = UDim2.new(0, 40, 0, 8),
+				Text = label, Font = Enum.Font.GothamBold, TextSize = 12, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 14}, row)
+			UI.bind(function(t) lbl.TextColor3 = t.Text end)
+			local setHue = UI.hueSlider(row, 40, EffectColors[key], function(col)
+				EffectColors[key] = col
+				MISC.dirty()
+				preview.BackgroundColor3 = col
+				XColorUpdate(key, col)
+			end, noBlack, true)
+			if UI.colorSetters then
+				UI.colorSetters[key] = function(col) preview.BackgroundColor3 = col; setHue(col) end
+			end
+			return row
+		end
+
+		local list = {
+			{"AirGlow", "Air glow  (any color except black)", true},
+			{"AirStar", "Air stars  (any color, black & white too)", false},
+		}
+
+		local pg = UI.pages.Settings
+		local lab
+		for _, c in ipairs(pg:GetChildren()) do
+			if c:IsA("TextLabel") and c.Text:find("Effect colors", 1, true) then lab = c; break end
+		end
+		local base = lab and lab.LayoutOrder
+		if base then
+			for _, c in ipairs(pg:GetChildren()) do
+				if c:IsA("GuiObject") and c ~= lab and c.LayoutOrder > base then c.LayoutOrder = c.LayoutOrder + #list end
+			end
+			UI.pdata.Settings.order = UI.pdata.Settings.order + #list
+		end
+		for i, it in ipairs(list) do
+			local row = colorRow(it[1], it[2], it[3])
+			if base then row.LayoutOrder = base + i end
+		end
+	end
+end
+
+do
+	local CW = {removed = {}, token = 0}
+
+	local function isOcean(d) return d.Name:lower() == "ocean" end
+
+	local function hide(d)
+		if CW.removed[d] ~= nil or not d.Parent then return end
+		for inst in pairs(CW.removed) do
+			if d:IsDescendantOf(inst) then return end
+		end
+		CW.removed[d] = d.Parent
+		d.Parent = nil
+	end
+
+	XH.ClearWater = function(on)
+		CW.token = CW.token + 1
+		local tok = CW.token
+		if CW.conn then CW.conn:Disconnect(); CW.conn = nil end
+
+		if on then
+			task.spawn(function()
+				local n = 0
+				for _, d in ipairs(workspace:GetDescendants()) do
+					if CW.token ~= tok then return end
+					if isOcean(d) then hide(d) end
+					n = n + 1
+					if n % 1500 == 0 then task.wait() end
+				end
+			end)
+			CW.conn = workspace.DescendantAdded:Connect(function(d)
+				if isOcean(d) then
+					task.defer(function() if CW.token == tok then hide(d) end end)
+				end
+			end)
+		else
+			for inst, parent in pairs(CW.removed) do
+				if parent and parent.Parent then inst.Parent = parent end
+				CW.removed[inst] = nil
+			end
+		end
+	end
+
+	UI.section("Map", "🌊  Water")
+	UI.add({Tab = "Map", Id = "ClearWater", Name = "Clear water", Sub = "Remove all Ocean parts", Icon = "🌊", Toggle = XT("ClearWater")})
+end
